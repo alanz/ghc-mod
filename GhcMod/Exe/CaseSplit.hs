@@ -62,22 +62,12 @@ splits file lineNo colNo =
   ghandle handler $ runGmlT' [Left file] deferErrors $ do
       oopts <- outputOpts
       crdl <- cradle
-      style <- getStyle
-      dflag <- G.getSessionDynFlags
       modSum <- fileModSummaryWithMapping (cradleCurrentDir crdl </> file)
       p <- G.parseModule modSum
       tcm <- G.typecheckModule p
-      whenFound' oopts (getSrcSpanTypeForSplit tcm lineNo colNo) $ \x -> do
-          let (varName, bndLoc, (varLoc,varT))
-                | (SplitInfo vn bl vlvt _matches) <- x
-                = (vn, bl, vlvt)
-                | (TySplitInfo vn bl vlvt) <- x
-                = (vn, bl, vlvt)
-              varName' = showName dflag style varName  -- Convert name to string
-          t <- withMappedFile file $ \file' ->
-                genCaseSplitTextFile file' (SplitToTextInfo varName' bndLoc varLoc $
-                                             getTyCons dflag style varName varT)
-          return $!! (fourInts bndLoc, t)
+      whenFound' oopts (performSplit file tcm lineNo colNo) $
+        \(SplitResult sLine sCol eLine eCol newText) ->
+        return $!! ((sLine, sCol, eLine, eCol), T.unpack newText)
  where
    handler (SomeException ex) = do
      gmLog GmException "splits" $
@@ -88,33 +78,34 @@ splits file lineNo colNo =
 -- Meant for library-usage.
 splits' :: IOish m => FilePath -> TypecheckedModule -> Int -> Int -> GhcModT m (Maybe SplitResult)
 splits' file tcm lineNo colNo =
-  ghandle handler $ runGmlT' [Right modName] deferErrors $ do
-    style <- getStyle
-    dflag <- G.getSessionDynFlags
-    Just x <- getSrcSpanTypeForFnSplit tcm lineNo colNo
-    let (varName, bndLoc, (varLoc,varT))
-          | (SplitInfo vn bl vlvt _matches) <- x
-          = (vn, bl, vlvt)
-          | (TySplitInfo vn bl vlvt) <- x
-          = (vn, bl, vlvt)
-        varName' = showName dflag style varName  -- Convert name to string
-        (G.RealSrcLoc startLoc) = G.srcSpanStart bndLoc
-        (G.RealSrcLoc endLoc)   = G.srcSpanEnd bndLoc
-        startLine = G.srcLocLine startLoc
-        startCol  = G.srcLocLine startLoc
-        endLine   = G.srcLocCol endLoc
-        endCol    = G.srcLocCol endLoc
-    t <- withMappedFile file $ \file' ->
-          genCaseSplitTextFile file' (SplitToTextInfo varName' bndLoc varLoc $
-                                      getTyCons dflag style varName varT)
-    return $ Just $ SplitResult startLine startCol endLine endCol $ T.pack t
+  ghandle handler $ runGmlT' [Right modName] deferErrors $ performSplit file tcm lineNo colNo
   where
     modName = G.ms_mod_name $ pm_mod_summary $ tm_parsed_module tcm
-
     handler (SomeException ex) = do
       gmLog GmException "splits'" $
             text "" $$ nest 4 (showToDoc ex)
       return Nothing
+
+performSplit :: IOish m => FilePath -> TypecheckedModule -> Int -> Int -> GmlT m (Maybe SplitResult)
+performSplit file tcm lineNo colNo = do
+  style <- getStyle
+  dflag <- G.getSessionDynFlags
+  Just x <- getSrcSpanTypeForSplit tcm lineNo colNo
+  let (varName, bndLoc, (varLoc,varT))
+        | (SplitInfo vn bl vlvt _matches) <- x
+        = (vn, bl, vlvt)
+        | (TySplitInfo vn bl vlvt) <- x
+        = (vn, bl, vlvt)
+      varName' = showName dflag style varName  -- Convert name to string
+      (G.RealSrcLoc startLoc) = G.srcSpanStart bndLoc
+      (G.RealSrcLoc endLoc)   = G.srcSpanEnd bndLoc
+      startLine = G.srcLocLine startLoc
+      startCol  = G.srcLocLine startLoc
+      endLine   = G.srcLocCol endLoc
+      endCol    = G.srcLocCol endLoc
+  t <- genCaseSplitTextFile file (SplitToTextInfo varName' bndLoc varLoc $
+                                    getTyCons dflag style varName varT)
+  return $ Just $ SplitResult startLine startCol endLine endCol $ T.pack t
 
 ----------------------------------------------------------------
 -- a. Code for getting the information of the variable
@@ -251,11 +242,13 @@ showFieldNames dflag style v (x:xs) = let fName = showName dflag style x
 ----------------------------------------------------------------
 -- c. Code for performing the case splitting
 
-genCaseSplitTextFile :: (MonadIO m, GhcMonad m) =>
-    FilePath -> SplitToTextInfo -> m String
-genCaseSplitTextFile file info = liftIO $ do
-  t <- T.readFile file
-  return $ getCaseSplitText (T.lines t) info
+
+genCaseSplitTextFile :: IOish m =>
+    FilePath -> SplitToTextInfo -> GmlT m String
+genCaseSplitTextFile file info =
+  withMappedFile file $ \file' -> liftIO $ do
+    t <- T.readFile file'
+    return $ getCaseSplitText (T.lines t) info
 
 getCaseSplitText :: [T.Text] -> SplitToTextInfo -> String
 getCaseSplitText t SplitToTextInfo{ sVarName = sVN, sBindingSpan = sBS

@@ -67,7 +67,7 @@ splits file lineNo colNo =
       tcm <- G.typecheckModule p
       whenFound' oopts (performSplit file tcm lineNo colNo) $
         \(SplitResult sLine sCol eLine eCol newText) ->
-        return $!! ((sLine, sCol, eLine, eCol), T.unpack newText)
+          return $!! ((sLine, sCol, eLine, eCol), T.unpack newText)
  where
    handler (SomeException ex) = do
      gmLog GmException "splits" $
@@ -90,23 +90,41 @@ performSplit :: IOish m => FilePath -> TypecheckedModule -> Int -> Int -> GmlT m
 performSplit file tcm lineNo colNo = do
   style <- getStyle
   dflag <- G.getSessionDynFlags
-  Just x <- getSrcSpanTypeForSplit tcm lineNo colNo
-  let (varName, bndLoc, (varLoc,varT))
-        | (SplitInfo vn bl vlvt _matches) <- x
-        = (vn, bl, vlvt)
-        | (TySplitInfo vn bl vlvt) <- x
-        = (vn, bl, vlvt)
-      varName' = showName dflag style varName  -- Convert name to string
-      (G.RealSrcLoc startLoc) = G.srcSpanStart bndLoc
-      (G.RealSrcLoc endLoc)   = G.srcSpanEnd bndLoc
-      startLine = G.srcLocLine startLoc
+  maybeSplitInfo <- getSrcSpanTypeForSplit tcm lineNo colNo
+  sequenceA $ constructSplitResult file maybeSplitInfo dflag style
+
+constructSplitResult :: (IOish m) => FilePath -> Maybe SplitInfo -> DynFlags -> PprStyle -> Maybe (GmlT m SplitResult)
+constructSplitResult file maybeSplitInfo dflag style = do
+  splitInfo <- maybeSplitInfo
+  let splitToTextInfo = constructSplitToTextInfo splitInfo dflag style
+  startLoc <- maybeSrcSpanStart $ sBindingSpan splitToTextInfo
+  endLoc <- maybeSrcSpanEnd $ sBindingSpan splitToTextInfo
+  let startLine = G.srcLocLine startLoc
       startCol  = G.srcLocLine startLoc
       endLine   = G.srcLocCol endLoc
       endCol    = G.srcLocCol endLoc
-  t <- genCaseSplitTextFile file (SplitToTextInfo varName' bndLoc varLoc $
-                                    getTyCons dflag style varName varT)
-  return $ Just $ SplitResult startLine startCol endLine endCol $ T.pack t
+      newText   = genCaseSplitTextFile file splitToTextInfo
+  return $ SplitResult startLine startCol endLine endCol . T.pack <$> newText
 
+constructSplitToTextInfo :: SplitInfo -> DynFlags -> PprStyle -> SplitToTextInfo
+constructSplitToTextInfo splitInfo dflag style =
+  SplitToTextInfo varName' bndLoc varLoc typeCons
+  where
+    typeCons = getTyCons dflag style varName varT
+    varName' = showName dflag style varName  -- Convert name to string
+    (varName, bndLoc, varLoc, varT) = case splitInfo of
+      (SplitInfo vn bl (vl, vt) _matches) -> (vn, bl, vl, vt)
+      (TySplitInfo vn bl (vl, vt)) -> (vn, bl, vl, vt)
+
+maybeSrcSpanStart :: G.SrcSpan -> Maybe G.RealSrcLoc
+maybeSrcSpanStart s = case G.srcSpanStart s of
+  (G.RealSrcLoc startLoc) -> Just startLoc
+  _ -> Nothing
+
+maybeSrcSpanEnd :: G.SrcSpan -> Maybe G.RealSrcLoc
+maybeSrcSpanEnd s = case G.srcSpanEnd s of
+  (G.RealSrcLoc endLoc) -> Just endLoc
+  _ -> Nothing
 ----------------------------------------------------------------
 -- a. Code for getting the information of the variable
 
@@ -162,7 +180,6 @@ getTyCons dflag style name ty | Just (tyCon, _) <- Ty.splitTyConApp_maybe ty =
   let name' = showName dflag style name  -- Convert name to string
   in getTyCon dflag style name' tyCon
 getTyCons dflag style name _ = [showName dflag style name]
-
 
 -- Write cases for one type
 getTyCon :: DynFlags -> PprStyle -> String -> Ty.TyCon -> [String]

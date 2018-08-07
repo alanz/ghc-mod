@@ -64,4 +64,4 @@ instance GmState m => GmState (MaybeT m) where
     gmsPut = MaybeT . (Just `liftM`) . gmsPut
     gmsState = MaybeT . (Just `liftM`) . gmsState
 
-deriving instance (Monad m, GmState (GhcModT m)) => GmState (GmlT m)
+deriving instance Monad m => GmState (GmlT m)

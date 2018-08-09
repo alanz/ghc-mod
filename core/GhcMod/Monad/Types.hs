@@ -166,8 +166,7 @@ gcatchDefault act handler = controlT $ \run -> run act `gcatch` (run . handler)
 gmaskDefault :: (Monad (t m), MonadTransControl t, ExceptionMonad m) => ((t m a -> t m a) -> t m b) -> t m b
 gmaskDefault f = controlT $ \run -> gmask $ \g -> run $ f $ restoreT . g . run
 
-controlT :: (MonadTransControl t, Monad m, Monad n, Monad (t m)) =>
-            ((forall a. t n a -> n (StT t a)) -> m (StT t b)) -> t m b
+controlT :: (MonadTransControl t, Monad m, Monad (t m)) => (Run t -> m (StT t b)) -> t m b
 controlT f = liftWith f >>= restoreT . return
 
 ----------------------------------------------------------------

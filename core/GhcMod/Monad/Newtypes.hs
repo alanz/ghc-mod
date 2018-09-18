@@ -84,10 +84,10 @@ newtype LightGhc a = LightGhc { unLightGhc :: ReaderT (IORef HscEnv) IO a }
              )
 
 -- GmOutT ----------------------------------------
-instance (MonadBaseControl IO m) => MonadBase IO (GmOutT m) where
+instance MonadBaseControl IO m => MonadBase IO (GmOutT m) where
     liftBase = GmOutT . liftBase
 
-instance (MonadBaseControl IO m) => MonadBaseControl IO (GmOutT m) where
+instance MonadBaseControl IO m => MonadBaseControl IO (GmOutT m) where
     type StM (GmOutT m) a = StM (ReaderT GhcModEnv m) a
     liftBaseWith = defaultLiftBaseWith
     restoreM = defaultRestoreM

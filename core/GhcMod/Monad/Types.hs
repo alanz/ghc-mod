@@ -83,10 +83,12 @@ import HscTypes
 import Control.Applicative
 import Control.Monad
 
-import Control.Monad.Reader (ReaderT(..))
-import Control.Monad.State.Strict (StateT(..))
+import Control.Monad.Reader (ReaderT)
+import Control.Monad.State.Strict (StateT)
+import qualified Control.Monad.State.Lazy as L (StateT)
 import Control.Monad.Trans.Journal (JournalT)
 import Control.Monad.Trans.Maybe (MaybeT)
+import Control.Monad.Except (ExceptT)
 
 import Control.Monad.Trans.Control
 
@@ -111,7 +113,7 @@ type Gm m = (GmEnv m, GmState m, GmLog m, GmOut m)
 
 type GmGhc m = (IOish m, GhcMonad m)
 
-instance (MonadIO m, MonadBaseControl IO m) => GhcMonad (GmlT m) where
+instance IOish m => GhcMonad (GmlT m) where
     getSession = gmlGetSession
     setSession = gmlSetSession
 
@@ -132,33 +134,12 @@ instance GhcMonad LightGhc where
     setSession a = (liftIO . flip writeIORef a) =<< LightGhc ask
 
 #if __GLASGOW_HASKELL__ >= 706
-instance (MonadIO m, MonadBaseControl IO m) => HasDynFlags (GmlT m) where
+instance IOish m => HasDynFlags (GmlT m) where
     getDynFlags = hsc_dflags <$> getSession
 
 instance HasDynFlags LightGhc where
     getDynFlags = hsc_dflags <$> getSession
 #endif
-
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (GmOutT m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
-
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (GmT m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
-
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (GmlT m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
 
 instance ExceptionMonad LightGhc where
   gcatch act handl =
@@ -169,35 +150,24 @@ instance ExceptionMonad LightGhc where
       in
         unLightGhc (f g_restore)
 
+instance ExceptionMonad m => ExceptionMonad (GmOutT m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (GmT m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (GmlT m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (StateT s m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (L.StateT s m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance (Monoid w, ExceptionMonad m) => ExceptionMonad (JournalT w m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (MaybeT m) where gcatch = gcatchDefault; gmask = gmaskDefault
+instance ExceptionMonad m => ExceptionMonad (ExceptT e m) where gcatch = gcatchDefault; gmask = gmaskDefault
 
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (StateT s m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
+gcatchDefault :: (Monad (t m), MonadTransControl t, ExceptionMonad m) => Exception e => t m a -> (e -> t m a) -> t m a
+gcatchDefault act handler = controlT $ \run -> run act `gcatch` (run . handler)
 
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
+gmaskDefault :: (Monad (t m), MonadTransControl t, ExceptionMonad m) => ((t m a -> t m a) -> t m b) -> t m b
+gmaskDefault f = controlT $ \run -> gmask $ \g -> run $ f $ restoreT . g . run
 
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (ReaderT s m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
-
-instance (Monoid w, MonadIO m, MonadBaseControl IO m) => ExceptionMonad (JournalT w m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
-
-instance (MonadIO m, MonadBaseControl IO m) => ExceptionMonad (MaybeT m) where
-    gcatch act handler = control $ \run ->
-        run act `gcatch` (run . handler)
-
-    gmask = liftBaseOp gmask . liftRestore
-     where liftRestore f r = f $ liftBaseOp_ r
-
+controlT :: (MonadTransControl t, Monad m, Monad (t m)) => (Run t -> m (StT t b)) -> t m b
+controlT f = liftWith f >>= restoreT . return
 
 ----------------------------------------------------------------
 

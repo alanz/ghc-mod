@@ -65,4 +65,4 @@ instance GmEnv m => GmEnv (ErrorT GhcModError m) where
     gmeReader = lift . gmeReader
     gmeLocal f ma = gmLiftWithInner (\run -> gmeLocal f (run ma))
 
-deriving instance (Monad m, GmEnv (GhcModT m)) => GmEnv (GmlT m)
+deriving instance Monad m => GmEnv (GmlT m)

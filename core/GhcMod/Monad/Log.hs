@@ -68,4 +68,4 @@ instance (Monad m, GmLog m) => GmLog (MaybeT m) where
     gmlClear = lift gmlClear
 
 deriving instance GmLog m => GmLog (GmOutT m)
-deriving instance (Monad m, GmLog (GhcModT m)) => GmLog (GmlT m)
+deriving instance Monad m => GmLog (GmlT m)

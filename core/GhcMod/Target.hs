@@ -115,7 +115,7 @@ initSession opts mdf = do
    putNewSession s = do
      crdl <- cradle
      nhsc_env_ref <- liftIO . newIORef =<< newLightEnv (initDF crdl)
-     runLightGhc' nhsc_env_ref $ setSessionDynFlags =<< getSessionDynFlags
+     _ <- runLightGhc' nhsc_env_ref $ setSessionDynFlags =<< getSessionDynFlags
      gmsPut s { gmGhcSession = Just $ GmGhcSession nhsc_env_ref }
 
 
@@ -193,7 +193,13 @@ runGmlTWith' efnmns' mdf mUpdateHooks wrapper action = do
     cfns <- mapM getCanonicalFileNameSafe ccfns
     let serfnmn = Set.fromList $ map Right mns ++ map Left cfns
     (opts, mappedStrs) <- targetGhcOptions crdl serfnmn
-    let opts' = opts ++ ["-O0"] ++ optGhcUserOptions
+
+    let opts' = opts ++ ["-O0", "-fno-warn-missing-home-modules"] ++ optGhcUserOptions
+
+    gmVomit
+      "session-ghc-options"
+      (text "Using the following mapped files")
+      (intercalate " " $ map (("\""++) . (++"\"")) mappedStrs)
 
     gmVomit
       "session-ghc-options"
@@ -213,7 +219,7 @@ runGmlTWith' efnmns' mdf mUpdateHooks wrapper action = do
     initSession opts' $
         setHscNothing >>> setLogger >>> mdf
 
-    let targetStrs = map moduleNameString mns ++ cfns
+    let targetStrs = mappedStrs ++ map moduleNameString mns ++ cfns
 
     gmVomit
       "session-ghc-options"
@@ -538,7 +544,11 @@ loadTargets opts targetStrs mUpdateHooks = do
     case target' of
       HscNothing -> do
         void $ load LoadAllTargets
+#if __GLASGOW_HASKELL__ >= 804
+        forM_ (mgModSummaries mg) $
+#else
         forM_ mg $
+#endif
           handleSourceError (gmLog GmDebug "loadTargets" . text . show)
           . void . (parseModule >=> typecheckModule >=> desugarModule)
       HscInterpreted -> do
@@ -575,7 +585,11 @@ loadTargets opts targetStrs mUpdateHooks = do
           Just f -> if Set.member f fpSet
                       then ms {ms_hspp_opts = (df . updateHooks) (ms_hspp_opts ms)}
                       else ms
+#if __GLASGOW_HASKELL__ >= 804
+        update s = s {hsc_mod_graph = mkModuleGraph $ map mustRecompile (mgModSummaries $ hsc_mod_graph s)}
+#else
         update s = s {hsc_mod_graph = map mustRecompile (hsc_mod_graph s)}
+#endif
       G.modifySession update
 
     setDynFlagsRecompile :: DynFlags -> DynFlags
@@ -585,7 +599,12 @@ loadTargets opts targetStrs mUpdateHooks = do
     unSetDynFlagsRecompile df = gopt_unset df Opt_ForceRecomp
 
 needsHscInterpreted :: ModuleGraph -> Bool
+#if __GLASGOW_HASKELL__ >= 804
+needsHscInterpreted mg = foo (mgModSummaries mg)
+  where foo = any $ \ms ->
+#else
 needsHscInterpreted = any $ \ms ->
+#endif
                 let df = ms_hspp_opts ms in
 #if __GLASGOW_HASKELL__ >= 800
                    TemplateHaskell `xopt` df

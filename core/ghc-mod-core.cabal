@@ -24,23 +24,8 @@ Description:
 
 
 Category:               GHC, Development
-Cabal-Version:          >= 1.18
-Build-Type:             Custom
--- Data-Files:             elisp/Makefile
---                         elisp/*.el
--- Extra-Source-Files:     ChangeLog
-
-
-Custom-Setup
-  Setup-Depends:         base
-                       , Cabal >= 1.18 && < 2.1
-                       , containers
-                       , filepath
-                       , directory
-                       , process
-                       , template-haskell
-                       , transformers
-
+Cabal-Version:          >= 1.24
+Build-Type:             Simple
 
 Library
   Default-Language:     Haskell2010
@@ -109,37 +94,32 @@ Library
                       , time
                       , transformers
 
-                      , base                 < 4.11 && >= 4.6.0.1
+                      -- , Cabal
+
+                      , base                 < 4.12 && >= 4.6.0.1
                       , extra                < 1.7  && >= 1.4
                       , fclabels             < 2.1  && >= 2.0
                       , ghc-paths            < 0.2  && >= 0.1.0.9
-                      , ghc-syb-utils        < 0.3  && >= 0.2.3
                       , haskell-src-exts     < 1.21 && >= 1.18
                       , monad-control        < 1.1  && >= 1
                       , monad-journal        < 0.9  && >= 0.4
                       , optparse-applicative < 0.15 && >= 0.13.0.0
                       , pipes                < 4.4  && >= 4.1
                       , safe                 < 0.4  && >= 0.3.9
-                      , semigroups           < 0.19 && >= 0.10.0
                       , split                < 0.3  && >= 0.2.2
                       , syb                  < 0.8  && >= 0.5.1
                       , temporary            < 1.3  && >= 1.2.0.3
                       , transformers-base    < 0.5  && >= 0.4.4
 
-                      , cabal-helper         < 0.9  && >= 0.8
-                      , ghc                  < 8.4  && >= 7.6
+                      , cabal-helper         < 1.9  && >= 1.0.0.0
+                      , ghc                  < 8.5  && >= 7.6
 
   if impl(ghc >= 8.0)
     Build-Depends:      ghc-boot
   if impl(ghc < 7.8)
     Build-Depends:      convertible          < 1.2  && >= 1.1.0.0
-
-
-Flag shelltest
-  Description: Enable/disable shelltest test-suite
-  Default: False
-  Manual:  True
-
+  if impl(ghc < 8.4)
+    Build-Depends:      ghc-syb-utils        < 0.3  && >= 0.2.3
 
 Source-Repository head
   Type:                 git

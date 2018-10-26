@@ -4,15 +4,14 @@
 module GhcMod.Exe.FillSig (
     sig
   , refine
-  , auto
+  -- , auto
   ) where
 
 import Data.Char (isSymbol)
 import Data.Function (on)
 import Data.Functor
-import Data.List (find, nub, sortBy)
+import Data.List (find, sortBy)
 import qualified Data.Map as M
-import Data.Maybe (catMaybes)
 import Prelude
 
 import Exception (ghandle, SomeException(..))
@@ -20,7 +19,6 @@ import GHC (GhcMonad, Id, ParsedModule(..), TypecheckedModule(..), DynFlags,
             SrcSpan, Type, GenLocated(L))
 import Pretty (($$), text, nest)
 import qualified GHC as G
-import qualified Name as G
 import Outputable (PprStyle)
 import qualified Type as Ty
 import qualified HsBinds as Ty
@@ -28,7 +26,7 @@ import qualified Class as Ty
 import qualified Var as Ty
 import qualified HsPat as Ty
 import qualified Language.Haskell.Exts as HE
-import Djinn.GHC
+-- import Djinn.GHC
 
 import qualified GhcMod.Gap as Gap
 import GhcMod.Convert
@@ -51,7 +49,7 @@ import GHC (unLoc)
 
 -- Possible signatures we can find: function or instance
 data SigInfo
-    = Signature SrcSpan [G.RdrName] (G.HsType G.RdrName)
+    = Signature SrcSpan [G.RdrName] (G.HsType Gap.GhcPs)
     | InstanceDecl SrcSpan G.Class
     | TyFamDecl SrcSpan G.RdrName TyFamType {- True if closed -} [G.RdrName]
 
@@ -115,8 +113,10 @@ getSignature :: GhcMonad m => G.ModSummary -> Int -> Int -> m (Maybe SigInfo)
 getSignature modSum lineNo colNo = do
     p@ParsedModule{pm_parsed_source = ps} <- G.parseModule modSum
     -- Inspect the parse tree to find the signature
-    case listifyParsedSpans ps (lineNo, colNo) :: [G.LHsDecl G.RdrName] of
-#if __GLASGOW_HASKELL__ >= 802
+    case listifyParsedSpans ps (lineNo, colNo) :: [G.LHsDecl Gap.GhcPs] of
+#if __GLASGOW_HASKELL__ >= 806
+      [L loc (G.SigD _ (Ty.TypeSig _ names (G.HsWC _ (G.HsIB _ (L _ ty)))))] ->
+#elif __GLASGOW_HASKELL__ >= 802
       [L loc (G.SigD (Ty.TypeSig names (G.HsWC _ (G.HsIB _ (L _ ty) _))))] ->
 #elif __GLASGOW_HASKELL__ >= 800
       [L loc (G.SigD (Ty.TypeSig names (G.HsIB _ (G.HsWC _ _ (L _ ty)))))] ->
@@ -127,7 +127,7 @@ getSignature modSum lineNo colNo = do
 #endif
         -- We found a type signature
         return $ Just $ Signature loc (map G.unLoc names) ty
-      [L _ (G.InstD _)] -> do
+      [L _ (G.InstD {})] -> do
         -- We found an instance declaration
         TypecheckedModule{tm_renamed_source = Just tcs
                          ,tm_checked_module_info = minfo} <- G.typecheckModule p
@@ -135,7 +135,9 @@ getSignature modSum lineNo colNo = do
         case Gap.getClass lst of
             Just (clsName,loc) -> obtainClassInfo minfo clsName loc
             _                  -> return Nothing
-#if __GLASGOW_HASKELL__ >= 802
+#if __GLASGOW_HASKELL__ >= 806
+      [L loc (G.TyClD _ (G.FamDecl _ (G.FamilyDecl _ info (L _ name) (G.HsQTvs _ vars) _ _ _)))] -> do
+#elif __GLASGOW_HASKELL__ >= 802
       [L loc (G.TyClD (G.FamDecl (G.FamilyDecl info (L _ name) (G.HsQTvs _ vars _) _ _ _)))] -> do
 #elif __GLASGOW_HASKELL__ >= 800
       [L loc (G.TyClD (G.FamDecl (G.FamilyDecl info (L _ name) (G.HsQTvs _ vars _) _ _)))] -> do
@@ -157,7 +159,11 @@ getSignature modSum lineNo colNo = do
                         G.DataFamily -> Data
 #endif
 
-#if __GLASGOW_HASKELL__ >= 800
+#if __GLASGOW_HASKELL__ >= 806
+            getTyFamVarName x = case x of
+                L _ (G.UserTyVar _ (G.L _ n))     -> n
+                L _ (G.KindedTyVar _ (G.L _ n) _) -> n
+#elif __GLASGOW_HASKELL__ >= 800
             getTyFamVarName x = case x of
                 L _ (G.UserTyVar (G.L _ n))     -> n
                 L _ (G.KindedTyVar (G.L _ n) _) -> n
@@ -279,9 +285,11 @@ class FnArgsInfo ty name | ty -> name, name -> ty where
   getFnName :: DynFlags -> PprStyle -> name -> String
   getFnArgs :: ty -> [FnArg]
 
-instance FnArgsInfo (G.HsType G.RdrName) (G.RdrName) where
+instance FnArgsInfo (G.HsType Gap.GhcPs) (G.RdrName) where
   getFnName dflag style name = showOccName dflag style $ Gap.occName name
-#if __GLASGOW_HASKELL__ >= 800
+#if __GLASGOW_HASKELL__ >= 806
+  getFnArgs (G.HsForAllTy _ _ (L _ iTy))
+#elif __GLASGOW_HASKELL__ >= 800
   getFnArgs (G.HsForAllTy _ (L _ iTy))
 #elif __GLASGOW_HASKELL__ >= 710
   getFnArgs (G.HsForAllTy _ _ _ _ (L _ iTy))
@@ -290,11 +298,18 @@ instance FnArgsInfo (G.HsType G.RdrName) (G.RdrName) where
 #endif
     = getFnArgs iTy
 
+#if __GLASGOW_HASKELL__ >= 806
+  getFnArgs (G.HsParTy _ (L _ iTy))           = getFnArgs iTy
+  getFnArgs (G.HsFunTy _ (L _ lTy) (L _ rTy)) =
+#else
   getFnArgs (G.HsParTy (L _ iTy))           = getFnArgs iTy
   getFnArgs (G.HsFunTy (L _ lTy) (L _ rTy)) =
+#endif
       (if fnarg lTy then FnArgFunction else FnArgNormal):getFnArgs rTy
     where fnarg ty = case ty of
-#if __GLASGOW_HASKELL__ >= 800
+#if __GLASGOW_HASKELL__ >= 806
+              (G.HsForAllTy _ _ (L _ iTy)) ->
+#elif __GLASGOW_HASKELL__ >= 800
               (G.HsForAllTy _ (L _ iTy)) ->
 #elif __GLASGOW_HASKELL__ >= 710
               (G.HsForAllTy _ _ _ _ (L _ iTy)) ->
@@ -303,8 +318,12 @@ instance FnArgsInfo (G.HsType G.RdrName) (G.RdrName) where
 #endif
                 fnarg iTy
 
+#if __GLASGOW_HASKELL__ >= 806
+              (G.HsParTy _ (L _ iTy))        -> fnarg iTy
+#else
               (G.HsParTy (L _ iTy))          -> fnarg iTy
-              (G.HsFunTy _ _)                -> True
+#endif
+              (G.HsFunTy {} )                -> True
               _                              -> False
   getFnArgs _ = []
 
@@ -401,7 +420,9 @@ findVar
   -> m (Maybe (SrcSpan, String, Type, Bool))
 findVar dflag style tcm tcs lineNo colNo =
   case lst of
-#if __GLASGOW_HASKELL__ >= 800
+#if __GLASGOW_HASKELL__ >= 806
+    e@(L _ (G.HsVar _ (L _ i))):others -> do
+#elif __GLASGOW_HASKELL__ >= 800
     e@(L _ (G.HsVar (L _ i))):others -> do
 #else
     e@(L _ (G.HsVar i)):others -> do
@@ -415,13 +436,17 @@ findVar dflag style tcm tcs lineNo colNo =
             name = getFnName dflag style i
             -- If inside an App, we need parenthesis
             b = case others of
+#if __GLASGOW_HASKELL__ >= 806
+                  L _ (G.HsApp _ (L _ a1) (L _ a2)):_ ->
+#else
                   L _ (G.HsApp (L _ a1) (L _ a2)):_ ->
+#endif
                     isSearchedVar i a1 || isSearchedVar i a2
                   _  -> False
         _ -> return Nothing
     _ -> return Nothing
   where
-    lst :: [G.LHsExpr Id]
+    lst :: [G.LHsExpr Gap.GhcTc]
     lst = sortBy (cmp `on` G.getLoc) $ listifySpans tcs (lineNo, colNo)
 
 infinitePrefixSupply :: String -> [String]
@@ -432,8 +457,10 @@ doParen :: Bool -> String -> String
 doParen False s = s
 doParen True  s = if ' ' `elem` s then '(':s ++ ")" else s
 
-isSearchedVar :: Id -> G.HsExpr Id -> Bool
-#if __GLASGOW_HASKELL__ >= 800
+isSearchedVar :: Id -> G.HsExpr Gap.GhcTc -> Bool
+#if __GLASGOW_HASKELL__ >= 806
+isSearchedVar i (G.HsVar _ (L _ i2)) = i == i2
+#elif __GLASGOW_HASKELL__ >= 800
 isSearchedVar i (G.HsVar (L _ i2)) = i == i2
 #else
 isSearchedVar i (G.HsVar i2) = i == i2
@@ -444,7 +471,8 @@ isSearchedVar _ _ = False
 ----------------------------------------------------------------
 -- REFINE AUTOMATICALLY
 ----------------------------------------------------------------
-
+{-
+This function needs djinn, which does not seem to be supported any more
 auto :: IOish m
      => FilePath     -- ^ A target file.
      -> Int          -- ^ Line number.
@@ -516,10 +544,10 @@ tyThingsToInfo (G.AnId i : xs) =
 tyThingsToInfo (_:xs) = tyThingsToInfo xs
 
 -- Find the Id of the function and the pattern where the hole is located
-getPatsForVariable :: G.TypecheckedSource -> (Int,Int) -> (Id, [Ty.LPat Id])
+getPatsForVariable :: G.TypecheckedSource -> (Int,Int) -> (Id, [Ty.LPat Gap.GhcTc])
 getPatsForVariable tcs (lineNo, colNo) =
   let (L _ bnd:_) = sortBy (cmp `on` G.getLoc) $
-                      listifySpans tcs (lineNo, colNo) :: [G.LHsBind Id]
+                      listifySpans tcs (lineNo, colNo) :: [G.LHsBind Gap.GhcTc]
    in case bnd of
         G.PatBind { Ty.pat_lhs = L ploc pat }  -> case pat of
           Ty.ConPatIn (L _ i) _ -> (i, [L ploc pat])
@@ -527,48 +555,74 @@ getPatsForVariable tcs (lineNo, colNo) =
         G.FunBind { Ty.fun_id = L _ funId } ->
           let m = sortBy (cmp `on` G.getLoc) $ listifySpans tcs (lineNo, colNo)
 #if __GLASGOW_HASKELL__ >= 708
-                    :: [G.LMatch Id (G.LHsExpr Id)]
+                    :: [G.LMatch Gap.GhcTc (G.LHsExpr Gap.GhcTc)]
 #else
-                    :: [G.LMatch Id]
+                    :: [G.LMatch Gap.GhcTc]
 #endif
-#if __GLASGOW_HASKELL__ >= 710
+#if __GLASGOW_HASKELL__ >= 804
+              (L _ (G.Match _ pats _):_) = m
+#elif __GLASGOW_HASKELL__ >= 710
               (L _ (G.Match _ pats _ _):_) = m
 #else
               (L _ (G.Match pats _ _):_) = m
 #endif
            in (funId, pats)
         _ -> (error "This should never happen", [])
+-}
 
-getBindingsForPat :: Ty.Pat Id -> M.Map G.Name Type
-#if __GLASGOW_HASKELL__ >= 800
+getBindingsForPat :: Ty.Pat Gap.GhcTc -> M.Map G.Name Type
+#if __GLASGOW_HASKELL__ >= 806
+getBindingsForPat (Ty.VarPat _ (L _ i)) = M.singleton (G.getName i) (Ty.varType i)
+#elif __GLASGOW_HASKELL__ >= 800
 getBindingsForPat (Ty.VarPat (L _ i)) = M.singleton (G.getName i) (Ty.varType i)
 #else
 getBindingsForPat (Ty.VarPat i) = M.singleton (G.getName i) (Ty.varType i)
 #endif
+#if __GLASGOW_HASKELL__ >= 806
+getBindingsForPat (Ty.LazyPat _ (L _ l)) = getBindingsForPat l
+getBindingsForPat (Ty.BangPat _ (L _ b)) = getBindingsForPat b
+getBindingsForPat (Ty.AsPat _ (L _ a) (L _ i)) =
+#else
 getBindingsForPat (Ty.LazyPat (L _ l)) = getBindingsForPat l
 getBindingsForPat (Ty.BangPat (L _ b)) = getBindingsForPat b
 getBindingsForPat (Ty.AsPat (L _ a) (L _ i)) =
+#endif
     M.insert (G.getName a) (Ty.varType a) (getBindingsForPat i)
-#if __GLASGOW_HASKELL__ >= 708
+#if __GLASGOW_HASKELL__ >= 806
+getBindingsForPat (Ty.ListPat _ l) =
+    M.unions $ map (\(L _ i) -> getBindingsForPat i) l
+#elif __GLASGOW_HASKELL__ >= 708
 getBindingsForPat (Ty.ListPat  l _ _) =
     M.unions $ map (\(L _ i) -> getBindingsForPat i) l
 #else
 getBindingsForPat (Ty.ListPat  l _)   =
     M.unions $ map (\(L _ i) -> getBindingsForPat i) l
 #endif
+#if __GLASGOW_HASKELL__ >= 806
+getBindingsForPat (Ty.TuplePat _ l _) =
+    M.unions $ map (\(L _ i) -> getBindingsForPat i) l
+#else
 getBindingsForPat (Ty.TuplePat l _ _) =
     M.unions $ map (\(L _ i) -> getBindingsForPat i) l
+#endif
+#if __GLASGOW_HASKELL__ < 806
 getBindingsForPat (Ty.PArrPat  l _)   =
     M.unions $ map (\(L _ i) -> getBindingsForPat i) l
+#endif
+#if __GLASGOW_HASKELL__ >= 806
+getBindingsForPat (Ty.ViewPat _ _ (L _ i)) = getBindingsForPat i
+getBindingsForPat (Ty.SigPat _ (L _ i)) = getBindingsForPat i
+#else
 getBindingsForPat (Ty.ViewPat _ (L _ i) _) = getBindingsForPat i
 getBindingsForPat (Ty.SigPatIn  (L _ i) _) = getBindingsForPat i
 getBindingsForPat (Ty.SigPatOut (L _ i) _) = getBindingsForPat i
+#endif
 getBindingsForPat (Ty.ConPatIn (L _ i) d) =
     M.insert (G.getName i) (Ty.varType i) (getBindingsForRecPat d)
 getBindingsForPat (Ty.ConPatOut { Ty.pat_args = d }) = getBindingsForRecPat d
 getBindingsForPat _ = M.empty
 
-getBindingsForRecPat :: Ty.HsConPatDetails Id -> M.Map G.Name Type
+getBindingsForRecPat :: Ty.HsConPatDetails Gap.GhcTc -> M.Map G.Name Type
 #if __GLASGOW_HASKELL__ >= 800
 getBindingsForRecPat (G.PrefixCon args) =
 #else

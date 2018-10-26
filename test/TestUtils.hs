@@ -4,6 +4,7 @@ module TestUtils (
   , runD
   , runV
   , runD'
+  , runV
   , runE
   , runNullLog
   , runGmOutDef
@@ -82,6 +83,11 @@ runV =
 runD' :: FilePath -> GhcModT IO a -> IO a
 runD' dir =
     extract . runGhcModTSpec' dir (setLogLevel testLogLevel defaultOptions)
+
+-- | Run GhcMod with default options
+runV :: GhcModT IO a -> IO a
+runV =
+    extract . runGhcModTSpec (setLogLevel GmVomit defaultOptions)
 
 setLogLevel :: GmLogLevel -> Options -> Options
 setLogLevel = set (lOoptLogLevel . lOptOutput)

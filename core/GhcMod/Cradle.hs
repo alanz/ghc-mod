@@ -22,16 +22,17 @@ import GhcMod.Error
 import Safe
 import Control.Applicative
 import Control.Monad.Trans.Maybe
+import Data.Foldable
 import Data.Maybe
 import System.Directory
 import System.FilePath
 import System.Environment
 import Prelude
 import Control.Monad.Trans.Journal (runJournalT)
-import Distribution.Helper (runQuery, mkQueryEnv, compilerVersion, distDir)
+import Distribution.Helper (runQuery, mkQueryEnv, distDir)
 -- import Distribution.System (buildPlatform)
-import Data.List (intercalate)
-import Data.Version (Version(..))
+import Text.ParserCombinators.ReadP (readP_to_S)
+import Data.Version (Version(..), parseVersion)
 
 ----------------------------------------------------------------
 
@@ -47,25 +48,25 @@ findCradleNoLog progs =
     fst <$> (runJournalT (findCradle progs) :: m (Cradle, GhcModLog))
 
 findCradle' :: (GmLog m, IOish m, GmOut m) => Programs -> FilePath -> m Cradle
-findCradle' Programs { stackProgram, cabalProgram } dir = run $
+findCradle' Programs { stackProgram, cabalProgram, ghcProgram } dir = run $
     msum [ stackCradle stackProgram dir
-         , cabalCradle cabalProgram dir
-         , sandboxCradle dir
-         , plainCradle dir
+         , cabalCradle cabalProgram ghcProgram dir
+         , sandboxCradle ghcProgram dir
+         , plainCradle ghcProgram dir
          ]
  where run a = fillTempDir =<< (fromJustNote "findCradle'" <$> runMaybeT a)
 
 findSpecCradle ::
     (GmLog m, IOish m, GmOut m) => Programs -> FilePath -> m Cradle
-findSpecCradle Programs { stackProgram, cabalProgram } dir = do
+findSpecCradle Programs { stackProgram, cabalProgram, ghcProgram } dir = do
     let cfs = [ stackCradleSpec stackProgram
-              , cabalCradle cabalProgram
-              , sandboxCradle
+              , cabalCradle cabalProgram ghcProgram
+              , sandboxCradle ghcProgram
               ]
     cs <- catMaybes <$> mapM (runMaybeT . ($ dir)) cfs
     gcs <- filterM isNotGmCradle cs
     fillTempDir =<< case gcs of
-                      [] -> fromJust <$> runMaybeT (plainCradle dir)
+                      [] -> fromJust <$> runMaybeT (plainCradle ghcProgram dir)
                       c:_ -> return c
  where
    isNotGmCradle crdl =
@@ -90,8 +91,8 @@ fillTempDir crdl = do
 -- runQuery qe action = run qe Nothing action
 
 cabalCradle ::
-    (IOish m, GmLog m, GmOut m) => FilePath -> FilePath -> MaybeT m Cradle
-cabalCradle cabalProg wdir = do
+    (IOish m, GmLog m, GmOut m) => FilePath -> FilePath -> FilePath -> MaybeT m Cradle
+cabalCradle cabalProg ghcProg wdir = do
     cabalFile <- MaybeT $ liftIO $ findCabalFile wdir
     let cabalDir = takeDirectory cabalFile
 
@@ -103,6 +104,9 @@ cabalCradle cabalProg wdir = do
       mzero
 
     isDistNewstyle <- liftIO $ doesDirectoryExist $ cabalDir </> "dist-newstyle"
+
+    ghcVer <- asum [tryProjectVer cabalDir, systemGhcVer ghcProg]
+
     -- TODO: consider a flag to choose new-build if neither "dist" nor "dist-newstyle" exist
     --       Or default to is for cabal >= 2.0 ?, unless flag saying old style
     if isDistNewstyle
@@ -117,6 +121,7 @@ cabalCradle cabalProg wdir = do
           , cradleTempDir    = error "tmpDir"
           , cradleCabalFile  = Just cabalFile
           , cradleDistDir    = dd
+          , cradleGhcVersion = ghcVer
           }
       else do
         gmLog GmInfo "" $ text "Using Cabal project at" <+>: text cabalDir
@@ -127,7 +132,16 @@ cabalCradle cabalProg wdir = do
           , cradleTempDir    = error "tmpDir"
           , cradleCabalFile  = Just cabalFile
           , cradleDistDir    = "dist"
+          , cradleGhcVersion = ghcVer
           }
+  where
+    tryProjectVer cabalDir = do
+      hasCabalProject <- liftIO $ doesFileExist $ cabalDir </> "cabal.project"
+      guard hasCabalProject
+      gmLog GmInfo "" $ text "Trying cabal project GHC version"
+      liftIO $ (readVersion . last . lines) <$>
+        readProcess cabalProg ["new-exec", "ghc", "--", "--numeric-version"] ""
+
 
 stackCradle ::
     (IOish m, GmLog m, GmOut m) => FilePath -> FilePath -> MaybeT m Cradle
@@ -167,6 +181,9 @@ stackCradle stackProg wdir = do
 
     senv <- MaybeT $ getStackEnv cabalDir stackProg
 
+    ghcVer <- liftIO $
+      readVersion <$> readProcess "stack" ["ghc", "--", "--numeric-version"] ""
+
     gmLog GmInfo "" $ text "Using Stack project at" <+>: text cabalDir
     return Cradle {
         cradleProject    = StackProject senv
@@ -175,6 +192,7 @@ stackCradle stackProg wdir = do
       , cradleTempDir    = error "tmpDir"
       , cradleCabalFile  = Just cabalFile
       , cradleDistDir    = seDistDir senv
+      , cradleGhcVersion = ghcVer
       }
 
 stackCradleSpec ::
@@ -191,10 +209,11 @@ stackCradleSpec stackProg wdir = do
    isGmDistDir dir =
        liftIO $ not <$> doesFileExist (dir </> ".." </> "ghc-mod.cabal")
 
-sandboxCradle :: (IOish m, GmLog m, GmOut m) => FilePath -> MaybeT m Cradle
-sandboxCradle wdir = do
+sandboxCradle :: (IOish m, GmLog m, GmOut m) => FilePath -> FilePath -> MaybeT m Cradle
+sandboxCradle ghcProg wdir = do
     sbDir <- MaybeT $ liftIO $ findCabalSandboxDir wdir
     gmLog GmInfo "" $ text "Using sandbox project at" <+>: text sbDir
+    ghcVer <- systemGhcVer ghcProg
     return Cradle {
         cradleProject    = SandboxProject
       , cradleCurrentDir = wdir
@@ -202,11 +221,13 @@ sandboxCradle wdir = do
       , cradleTempDir    = error "tmpDir"
       , cradleCabalFile  = Nothing
       , cradleDistDir    = "dist"
+      , cradleGhcVersion = ghcVer
       }
 
-plainCradle :: (IOish m, GmLog m, GmOut m) => FilePath -> MaybeT m Cradle
-plainCradle wdir = do
+plainCradle :: (IOish m, GmLog m, GmOut m) => FilePath -> FilePath -> MaybeT m Cradle
+plainCradle ghcProg wdir = do
     gmLog GmInfo "" $ text "Found no other project type, falling back to plain GHC project"
+    ghcVer <- systemGhcVer ghcProg
     return $ Cradle {
         cradleProject    = PlainProject
       , cradleCurrentDir = wdir
@@ -214,6 +235,7 @@ plainCradle wdir = do
       , cradleTempDir    = error "tmpDir"
       , cradleCabalFile  = Nothing
       , cradleDistDir    = "dist"
+      , cradleGhcVersion = ghcVer
       }
 
 -- | Cabal produces .ghc.environment files which are loaded by GHC if
@@ -226,3 +248,10 @@ shouldLoadGhcEnvironment crdl =
   if cradleProject crdl == PlainProject
     then LoadGhcEnvironment
     else DontLoadGhcEnvironment
+
+systemGhcVer :: IOish m => FilePath -> m Version
+systemGhcVer ghcProg = liftIO $
+  readVersion . init <$> readProcess ghcProg ["--numeric-version"] ""
+
+readVersion :: String -> Version
+readVersion = fst . last . readP_to_S parseVersion

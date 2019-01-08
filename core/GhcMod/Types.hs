@@ -28,6 +28,7 @@ import Data.Maybe
 import Data.Typeable (Typeable)
 import Data.IORef
 import Data.Label.Derive
+import Data.Version
 import Distribution.Helper hiding (Programs(..))
 import qualified Distribution.Helper as CabalHelper
 import Exception (ExceptionMonad)
@@ -165,6 +166,8 @@ data Cradle = Cradle {
   , cradleCabalFile  :: Maybe FilePath
   -- | The build info directory.
   , cradleDistDir    :: FilePath
+  -- | GHC version
+  , cradleGhcVersion :: Version
   } deriving (Eq, Show, Ord)
 
 data LoadGhcEnvironment = LoadGhcEnvironment

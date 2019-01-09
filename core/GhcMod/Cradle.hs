@@ -136,11 +136,22 @@ cabalCradle cabalProg ghcProg wdir = do
           }
   where
     tryProjectVer cabalDir = do
-      hasCabalProject <- liftIO $ doesFileExist $ cabalDir </> "cabal.project"
-      guard hasCabalProject
+      guard =<< liftIO (hasCabalProject cabalDir)
       gmLog GmInfo "" $ text "Trying cabal project GHC version"
       liftIO $ (readVersion . last . lines) <$>
         readProcess cabalProg ["new-exec", "ghc", "--", "--numeric-version"] ""
+
+    -- Recursively check if any parent directories contain a cabal.project file
+    hasCabalProject dir = do
+      fileExists <- doesFileExist $ dir </> "cabal.project"
+      if fileExists
+        then return True
+        else do
+          let parent = takeDirectory dir
+          parentExists <- doesPathExist parent
+          if parentExists
+            then hasCabalProject parent
+            else return False
 
 
 stackCradle ::
@@ -182,7 +193,7 @@ stackCradle stackProg wdir = do
     senv <- MaybeT $ getStackEnv cabalDir stackProg
 
     ghcVer <- liftIO $
-      readVersion <$> readProcess "stack" ["ghc", "--", "--numeric-version"] ""
+      readVersion <$> readProcess "stack" ["query", "compiler"] ""
 
     gmLog GmInfo "" $ text "Using Stack project at" <+>: text cabalDir
     return Cradle {

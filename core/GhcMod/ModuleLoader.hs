@@ -58,10 +58,9 @@ getModulesGhc' :: GM.IOish m
 getModulesGhc' wrapper targetFile = do
   cfileName <- liftIO $ canonicalizePath targetFile
   mfs <- GM.getMMappedFiles
-  mFileName <- liftIO . canonicalizePath $ getMappedFileName cfileName mfs
   refTypechecked <- liftIO $ newIORef Nothing
   refParsed <- liftIO $ newIORef Nothing
-  let keepInfo = pure . (mFileName ==)
+  let keepInfo = pure . (cfileName ==)
       saveTypechecked = writeIORef refTypechecked . Just
       saveParsed = writeIORef refParsed . Just
   res <- getModulesGhc wrapper [cfileName] keepInfo saveTypechecked saveParsed

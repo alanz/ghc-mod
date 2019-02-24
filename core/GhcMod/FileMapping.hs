@@ -18,6 +18,8 @@ import System.Directory
 
 import Control.Monad.Trans.Maybe
 import GHC
+import StringBuffer
+import Utils
 import Control.Monad
 
 {- | maps 'FilePath', given as first argument to take source from
@@ -68,19 +70,21 @@ loadMappedFile' from to isTemp = do
 mapFile :: (IOish m, GmState m) => HscEnv -> Target -> m Target
 mapFile _ (Target tid@(TargetFile filePath _) taoc _) = do
   mapping <- lookupMMappedFile filePath
-  return $ mkMappedTarget (Just filePath) tid taoc mapping
+  liftIO $ mkMappedTarget (Just filePath) tid taoc mapping
 mapFile env (Target tid@(TargetModule moduleName) taoc _) = do
   (fp, mapping) <- do
     filePath <- fmap (fmap mpPath) (liftIO $ findModulePath env moduleName)
     mmf <- runMaybeT $ MaybeT (return filePath) >>= MaybeT . lookupMMappedFile
     return (filePath, mmf)
-  return $ mkMappedTarget fp tid taoc mapping
+  liftIO $ mkMappedTarget fp tid taoc mapping
 
-mkMappedTarget :: Maybe FilePath -> TargetId -> Bool -> Maybe FileMapping -> Target
-mkMappedTarget _ _ taoc (Just to) =
-  mkTarget (TargetFile (fmPath to) Nothing) taoc Nothing
+mkMappedTarget :: Maybe FilePath -> TargetId -> Bool -> Maybe FileMapping -> IO Target
+mkMappedTarget _ tid taoc (Just to) = do
+  contents <- hGetStringBuffer (fmPath to)
+  time <- getModificationTime (fmPath to)
+  return $ mkTarget tid taoc (Just (contents, time))
 mkMappedTarget _ tid taoc _ =
-  mkTarget tid taoc Nothing
+  return $ mkTarget tid taoc Nothing
 
 {-|
 unloads previously mapped file \'file\', so that it's no longer mapped,

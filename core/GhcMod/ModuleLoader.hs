@@ -9,6 +9,7 @@ module GhcMod.ModuleLoader
   ) where
 
 import           Control.Concurrent.MVar
+import           Control.Monad
 import           Control.Monad.IO.Class
 
 import qualified Data.Map                          as Map
@@ -66,8 +67,8 @@ getModulesGhc' wrapper targetFile = do
   refTypechecked <- liftIO newEmptyMVar
   refParsed <- liftIO newEmptyMVar
   let keepInfo = pure . (mFileName ==)
-      saveTypechecked = putMVar refTypechecked
-      saveParsed = putMVar refParsed
+      saveTypechecked = void . tryPutMVar refTypechecked
+      saveParsed = void . tryPutMVar refParsed
   res <- getModulesGhc wrapper [cfileName] keepInfo saveTypechecked saveParsed
   mtm <- liftIO $ tryTakeMVar refTypechecked
   mpm <- liftIO $ tryTakeMVar refParsed

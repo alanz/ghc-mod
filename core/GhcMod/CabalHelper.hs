@@ -97,13 +97,13 @@ getComponents = chCached $ \distdir -> Cached {
     cachedAction = \ _tcf (_progs, _projdir, _ver) _ma -> do
       cs <- runCHQuery $ components $
              GmComponent mempty
-               CH.<$> ghcOptions
-               CH.<.> ghcPkgOptions
-               CH.<.> ghcSrcOptions
-               CH.<.> ghcLangOptions
-               CH.<.> entrypoints
-               CH.<.> entrypoints
-               CH.<.> sourceDirs
+               <$> ghcOptions
+               <.> ghcPkgOptions
+               <.> ghcSrcOptions
+               <.> ghcLangOptions
+               <.> entrypoints
+               <.> entrypoints
+               <.> sourceDirs
       return ([setupConfigPath distdir], cs)
   }
 

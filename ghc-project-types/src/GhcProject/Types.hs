@@ -139,5 +139,11 @@ instance Binary ChComponentName where
 instance Binary ChEntrypoint where
     put = ggput . from
     get = to `fmap` ggget
+instance Binary ChLibraryName where
+    put = ggput . from
+    get = to `fmap` ggget
+instance Binary EnvOverride where
+    put = ggput . from
+    get = to `fmap` ggget
 
 -- ---------------------------------------------------------------------

@@ -51,6 +51,10 @@ renderSDoc sdoc = do
 gmComponentNameDoc :: ChComponentName -> Doc
 gmComponentNameDoc ChSetupHsName   = text $ "Setup.hs"
 #if MIN_VERSION_cabal_helper(0,8,0)
+gmComponentNameDoc (ChLibName _)    = text $ "library"
+-- gmComponentNameDoc (ChSubLibName _)= text $ "library"
+gmComponentNameDoc (ChFLibName _)  = text $ "flibrary"
+#elif MIN_VERSION_cabal_helper(0,8,0)
 gmComponentNameDoc ChLibName       = text $ "library"
 gmComponentNameDoc (ChSubLibName _)= text $ "library"
 gmComponentNameDoc (ChFLibName _)  = text $ "flibrary"

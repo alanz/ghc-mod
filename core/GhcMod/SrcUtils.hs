@@ -7,13 +7,13 @@
 module GhcMod.SrcUtils
   (
     pretty
-  , showName
-  , listifySpans
+  -- , showName
+  -- , listifySpans
 
   -- For Exe.Info
-  , collectSpansTypes
-  , toTup
-  , cmp
+  -- , collectSpansTypes
+  -- , toTup
+  -- , cmp
   ) where
 
 import Control.Applicative
@@ -40,6 +40,7 @@ import Data.List (nub)
 import Control.Arrow
 import qualified Data.Map as M
 
+#if 0
 ----------------------------------------------------------------
 
 instance HasType (LHsExpr GhcTc) where
@@ -68,11 +69,7 @@ type CstGenQS = M.Map G.Var Type
 collectSpansTypes :: (GhcMonad m) => Bool -> G.TypecheckedModule -> (Int,Int) -> m [(SrcSpan, Type)]
 collectSpansTypes withConstraints tcs lc = collectSpansTypes' withConstraints tcs (`G.spans` lc)
 
--- collectAllSpansTypes :: (GhcMonad m) => Bool -> G.TypecheckedModule -> m [(SrcSpan, Type)]
--- collectAllSpansTypes withConstraints tcs = collectSpansTypes' withConstraints tcs (const True)
-
 collectSpansTypes' :: forall m. (GhcMonad m) => Bool -> G.TypecheckedModule -> (SrcSpan -> Bool) -> m [(SrcSpan, Type)]
--- collectSpansTypes' :: forall m.(GhcMonad m) => Bool -> G.TypecheckedModule -> (Int, Int) -> m [(SrcSpan, Type)]
 collectSpansTypes' withConstraints tcs f =
   -- This walks AST top-down, left-to-right, while carrying CstGenQS down the tree
   -- (but not left-to-right)
@@ -198,24 +195,6 @@ listifySpans tcs lc = listifyStaged TypeChecker p tcs
   where
     p (L spn _) = G.isGoodSrcSpan spn && spn `G.spans` lc
 
--- listifyParsedSpans :: Typeable a => ParsedSource -> (Int, Int) -> [Located a]
--- #if __GLASGOW_HASKELL__ >= 804
--- listifyParsedSpans pcs lc = listify p pcs
--- #else
--- listifyParsedSpans pcs lc = listifyStaged Parser p pcs
--- #endif
---   where
---     p (L spn _) = G.isGoodSrcSpan spn && spn `G.spans` lc
-
--- listifyRenamedSpans :: Typeable a => RenamedSource -> (Int, Int) -> [Located a]
--- #if __GLASGOW_HASKELL__ >= 804
--- listifyRenamedSpans pcs lc = listify p pcs
--- #else
--- listifyRenamedSpans pcs lc = listifyStaged Renamer p pcs
--- #endif
---   where
---     p (L spn _) = G.isGoodSrcSpan spn && spn `G.spans` lc
-
 #if __GLASGOW_HASKELL__ < 804
 listifyStaged :: Typeable r => Stage -> (r -> Bool) -> GenericQ [r]
 listifyStaged s p = everythingStaged s (++) [] ([] `mkQ` (\x -> [x | p x]))
@@ -232,26 +211,10 @@ toTup dflag style (spn, typ) = (fourInts spn, pretty dflag style typ)
 
 fourInts :: SrcSpan -> (Int,Int,Int,Int)
 fourInts = fromMaybe (0,0,0,0) . Gap.getSrcSpan
-
--- fourIntsHE :: HE.SrcSpan -> (Int,Int,Int,Int)
--- fourIntsHE loc = ( HE.srcSpanStartLine loc, HE.srcSpanStartColumn loc
---                  , HE.srcSpanEndLine loc, HE.srcSpanEndColumn loc)
-
--- -- Check whether (line,col) is inside a given SrcSpanInfo
--- typeSigInRangeHE :: Int -> Int -> HE.Decl HE.SrcSpanInfo -> Bool
--- typeSigInRangeHE lineNo colNo (HE.TypeSig (HE.SrcSpanInfo s _) _ _) =
---   HE.srcSpanStart s <= (lineNo, colNo) && HE.srcSpanEnd s >= (lineNo, colNo)
--- typeSigInRangeHE lineNo colNo (HE.TypeFamDecl (HE.SrcSpanInfo s _) _ _ _) =
---   HE.srcSpanStart s <= (lineNo, colNo) && HE.srcSpanEnd s >= (lineNo, colNo)
--- typeSigInRangeHE lineNo colNo (HE.DataFamDecl (HE.SrcSpanInfo s _) _ _ _) =
---   HE.srcSpanStart s <= (lineNo, colNo) && HE.srcSpanEnd s >= (lineNo, colNo)
--- typeSigInRangeHE _  _ _= False
+#endif
 
 pretty :: DynFlags -> PprStyle -> Type -> String
 pretty dflag style = showOneLine dflag style . Gap.typeForUser
 
 showName :: DynFlags -> PprStyle -> G.Name -> String
 showName dflag style name = showOneLine dflag style $ Gap.nameForUser name
-
--- showOccName :: DynFlags -> PprStyle -> OccName -> String
--- showOccName dflag style name = showOneLine dflag style $ Gap.occNameForUser name

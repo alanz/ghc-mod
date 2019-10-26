@@ -14,6 +14,7 @@
 -- You should have received a copy of the GNU Affero General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables, RecordWildCards #-}
 module GhcMod.HomeModuleGraph (
    GmModuleGraph(..)
@@ -32,6 +33,7 @@ module GhcMod.HomeModuleGraph (
  , moduleGraphToDot
  ) where
 
+import Bag
 import DriverPipeline
 import DynFlags
 import ErrUtils
@@ -39,6 +41,7 @@ import Exception
 import Finder
 import GHC
 import HscTypes
+import DriverPhases
 import Pretty
 
 import Control.Arrow ((&&&))
@@ -47,6 +50,7 @@ import Control.Monad
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
 import Control.Monad.State.Strict (execStateT)
 import Control.Monad.State.Class
+import Data.List (intercalate)
 import Data.Maybe
 import Data.Monoid as Monoid
 import Data.Map  (Map)
@@ -251,7 +255,31 @@ preprocessFile env file =
   withLogger' env $ \setDf -> do
     withMappedFile file $ \fn -> do
       let env' = env { hsc_dflags = setDf (hsc_dflags env) }
+      -- liftIO $ preprocess env' (fn, Nothing)
+#if __GLASGOW_HASKELL__ >= 808
+      r <- liftIO $ preprocess env' fn Nothing (Just (Cpp HsSrcFile))
+      case r of
+        Left err -> error $ showErrorMessages err
+        Right (dflags', hspp_fn) -> do
+          return (dflags', hspp_fn)
+#else
       liftIO $ preprocess env' (fn, Nothing)
+#endif
+
+{-
+-- GHC 8.8
+preprocess :: HscEnv
+           -> FilePath -- ^ input filename
+           -> Maybe InputFileBuffer
+           -- ^ optional buffer to use instead of reading the input file
+           -> Maybe Phase -- ^ starting phase
+           -> IO (Either ErrorMessages (DynFlags, FilePath))
+-}
+
+#if __GLASGOW_HASKELL__ >= 808
+showErrorMessages :: ErrorMessages -> String
+showErrorMessages msgs = intercalate "\n" $ map show $ bagToList msgs
+#endif
 
 fileModuleName :: (IOish m, GmEnv m, GmState m) =>
   HscEnv -> FilePath -> m (Either [String] (Maybe ModuleName))

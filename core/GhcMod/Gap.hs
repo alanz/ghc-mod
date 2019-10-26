@@ -213,7 +213,12 @@ renderGm = Pretty.fullRender Pretty.PageMode 80 1.2 string_txt ""
    string_txt (Pretty.Chr c)   s  = c:s
    string_txt (Pretty.Str s1)  s2 = s1 ++ s2
    string_txt (Pretty.PStr s1) s2 = unpackFS s1 ++ s2
-#if __GLASGOW_HASKELL__ >= 806
+#if __GLASGOW_HASKELL__ >= 808
+   string_txt (Pretty.LStr s1) s2 = unpackPtrString s1 ++ s2
+                   -- a '\0'-terminated array of bytes
+   string_txt (Pretty.RStr n c) s2 = replicate n c ++ s2
+                   -- a repeated character (e.g., ' ')
+#elif __GLASGOW_HASKELL__ >= 806
    string_txt (Pretty.LStr s1) s2 = unpackLitString s1 ++ s2
                    -- a '\0'-terminated array of bytes
    string_txt (Pretty.RStr n c) s2 = replicate n c ++ s2

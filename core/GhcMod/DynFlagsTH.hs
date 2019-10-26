@@ -94,6 +94,8 @@ deriveEqDynFlags qds = do
            , "OverridingBool" -- added for ghc-8.2
            , "Scheme"         -- added for ghc-8.2
            , "LoadedPlugin"   -- added for ghc-8.6
+           , "StaticPlugin"   -- added for ghc-8.8
+           , "CfgWeights"     -- added for ghc-8.8
            ]
        ignoredTypeOccNames = [ "OnOff" ]
 
